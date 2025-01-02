@@ -1,10 +1,10 @@
 import argparse
 import os
 from transformers import *
-import torch
+import mindspore as ms
+from mindspore import Tensor, nn, context
 from model import LangModelWithDense
 from loader import load_data
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -14,8 +14,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print("Using device: {}\n".format(device))
+    context.set_context(mode=context.GRAPH_MODE, device_target="CPU")
+    print("Using device: CPU\n")
 
     models = []
     for model_path in os.listdir(args.ensemble_path):
@@ -23,23 +23,23 @@ if __name__ == "__main__":
         
         model_name_path = os.path.join(args.ensemble_path, model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_name_path if "scibert" not in model_name_path else "bert-base-uncased")
-        model = torch.load(os.path.join(args.ensemble_path, model_path, "model.pt"), map_location=device)
+        model = ms.load_checkpoint(os.path.join(args.ensemble_path, model_path, "model.ckpt"))
         model.fine_tune = False
-        model.eval()
+        model.set_train(False)
 
         models.append((model, tokenizer, model_path))
 
     predictions = {}
     for model, tokenizer, model_path in models:
         print("Predicting labels for model: {}...".format(model_path))
-        test_loader = load_data(args.input_path, tokenizer, device)
+        test_loader = load_data(args.input_path, tokenizer, "CPU")
 
         y_pred = []
         for test_x, mask in test_loader:
-            outputs = torch.sigmoid(model.forward(test_x, mask).reshape(-1))
+            outputs = nn.Sigmoid()(model(Tensor(test_x), Tensor(mask)).reshape(-1))
 
             for output in outputs:
-                pred = 0 if output < 0.5 else 1
+                pred = 0 if output.asnumpy() < 0.5 else 1
 
                 y_pred.append(pred)
 
